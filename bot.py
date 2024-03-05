@@ -8,32 +8,32 @@ from slackeventsapi import SlackEventAdapter
 
 app = Flask(__name__)
 
-greetings = ["hi", "hello", "morning", "hey"]
+greetings = ["hi", "hello", "morning", "hey", "cześc", "hej", "czesc"]
 
-# Ustawienie zmiennych środowiskowych
+# Environmental variables
 SLACK_SIGNING_SECRET = os.environ['SLACK_SIGNING_SECRET']
 slack_token = os.environ['SLACK_BOT_TOKEN']
 
 slack_client = WebClient(token=slack_token)
 
-# Inicjalizacja SlackEventAdapter
+# Start SlackEventAdapter
 slack_events_adapter = SlackEventAdapter(SLACK_SIGNING_SECRET, "/slack/events", app)
 
-# Funkcja obsługująca żądania HTTP GET/POST na głównym endpointcie
+# HTTP GET/POST on main endpoint
 @app.route("/", methods=['GET', 'POST'])
 def event_hook():
     if request.method == 'POST':
         json_dict = json.loads(request.data.decode("utf-8"))
-        # Obsługa URL Verification Challenge od Slack
+        #  URL Verification Challenge ofromSlack
         if json_dict['type'] == 'url_verification':
             return json_dict['challenge']
     return Response(status=200)
 
-# Obsługa zdarzeń typu 'app_mention', kiedy aplikacja jest wspomniana
+# 'app_mention' events
 @slack_events_adapter.on("app_mention")
 def handle_message(event_data):
     message = event_data["event"]
-    # Sprawdzenie, czy wiadomość nie jest subtypem innym niż standardowa wiadomość (np. wiadomość usunięta)
+    # Check if message is not subtype other than standard message (f.e. deleted message)
     if message.get("subtype") is None:
         text = message.get("text")
         channel_id = message["channel"]
@@ -41,11 +41,17 @@ def handle_message(event_data):
             try:
                 response = slack_client.chat_postMessage(
                     channel=channel_id,
-                    text=f"Hello <@{message['user']}>! :tada:"
+                    text=f"Do roboty, <@{message['user']}>! :wat2:"
                 )
             except SlackApiError as e:
                 print(f"Error posting message: {e.response['error']}")
 
-# Uruchomienie serwera Flask
+
+# slack_client.chat_postMessage(
+#     channel="test_bot",
+#     text="What's, up folks?"
+# )
+
+# Flask server start
 if __name__ == "__main__":
     app.run(port=3000, debug=True)
