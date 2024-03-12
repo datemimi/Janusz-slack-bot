@@ -1,42 +1,19 @@
-from flask import Flask, request, Response, jsonify
+from flask import Flask, request, Response, jsonify 
 import os
 import json
 from slack_sdk import WebClient
 from slack_sdk.errors import SlackApiError
 from slackeventsapi import SlackEventAdapter
 
-# from quip_spreadsheet.quip import QuipClient
-
 app = Flask(__name__)
 greetings = [
-    "hi",
-    "hello",
-    "morning",
-    "hey",
-    "hej",
-    "czesc",
-    "cześć",
-    "witaj",
-    "dzien dobry",
-    "siema",
-    "dzień dobry",
-    "jol",
-    "joł",
+    "hi", "hello", "morning", "hey", "hej", "czesc", "cześć", "witaj", "dzien dobry",
+    "siema", "dzień dobry", "jol", "joł",
 ]
 
-forbidden = [
-    "fuck",
-    "shit",
-    "kurwa",
-    "chuj",
-    "gówno",
-    "gówniany",
-    "rozwolnienie",
-    "debil",
-]
+#forbidden = []
 
 smoke_break = []
-
 jokes = []
 
 # Environmental variables
@@ -45,30 +22,21 @@ slack_token = os.environ["SLACK_BOT_TOKEN"]
 verification_token = os.environ["VERIFICATION"]
 slack_client = WebClient(token=slack_token)
 slack_events_adapter = SlackEventAdapter(SLACK_SIGNING_SECRET, "/slack/events", app)
-# QUIP_ACCESS_TOKEN = os.environ["QUIP_PERSONAL_TOKEN"] #SEpOQU1BaG5idzg=|1741212875|8E1T9LTc2oA46yxk43aLoOI0kE/S98KU5XNM8OpCBn0=
-# quip_client = QuipClient("SEpOQU1BbGk2VkI=|1741214408|7Ja1fdkdjrxWRhaqmi26MCB6105BtTCwNUuAKd7fqPM=", "https://scph7502c.quip.com/")
 
-
-# HTTP GET/POST non main endpoint
 @app.route("/", methods=["GET", "POST"])
 def event_hook():
     if request.method == "POST":
         json_dict = json.loads(request.data.decode("utf-8"))
-        # URL Verification Challenge
         if json_dict["type"] == "url_verification":
             return json_dict["challenge"]
     return Response(status=200)
 
-
-# 'message' events
 @slack_events_adapter.on("message")
 def handle_message(event_data):
     message = event_data["event"]
-    # Check if message is not other subtype than standard message (f.e. not deleted message)
     if message.get("subtype") is None:
         text1 = message.get("text")
         channel_id = message["channel"]
-        # Check if message contains any forbidden word
         for forbidden_word in forbidden:
             if forbidden_word in text1.lower():
                 try:
@@ -78,14 +46,11 @@ def handle_message(event_data):
                     )
                 except SlackApiError as e:
                     print(f"Error posting message: {e.response['error']}")
-                break  # Stop checking for forbidden words after the first match
+                break
 
-
-# 'app_mention' events
 @slack_events_adapter.on("app_mention")
 def handle_app_mention(event_data):
     message = event_data["event"]
-    # Check if message is not other subtype than standard message (f.e. not deleted message)
     if message.get("subtype") is None:
         text = message.get("text")
         channel_id = message["channel"]
@@ -93,34 +58,55 @@ def handle_app_mention(event_data):
             try:
                 slack_client.chat_postMessage(
                     channel=channel_id,
-                    text=f"Be more attentive,<@{message['user']}>! :wat2:",
+                    text=f"Be more attentive, <@{message['user']}>! :wat2:",
                 )
             except SlackApiError as e:
                 print(f"Error posting message: {e.response['error']}")
 
+@app.route("/joke", methods=["POST"])
+def handle_joke():
+    if request.form["token"] != verification_token:
+        return Response("Invalid token"), 403
+    try:
+        response = slack_client.views_open(
+            trigger_id=request.form["trigger_id"],
+            view={
+                "type": "modal",
+                "callback_id": "joke-modal",
+                "title": {"type": "plain_text", "text": "Wprowadź dane"},
+                "blocks": [
+                    {
+                        "type": "input",
+                        "block_id": "joke_input",
+                        "element": {"type": "plain_text_input", "action_id": "joke"},
+                        "label": {"type": "plain_text", "text": "Video ID:"},
+                    }
+                ],
+                "submit": {"type": "plain_text", "text": "Submit"},
+            },
+        )
+    except SlackApiError as e:
+        print(f"Error opening modal: {e.response['error']}")
+        return Response("Error"), 500
 
-# Slash command
-@app.route("/joke", methods=["POST"])         
-def slash_joke():
-    if request.form["token"] == verification_token:
-        payload = {"text": "I can tell you a joke if you want"}
-        return jsonify(payload)
+    return Response(), 200
 
+@app.route("/submission", methods=["POST"])
+def handle_submission():
+    payload = json.loads(request.form.get("payload"))
+    if payload["type"] == "view_submission":
+        submitted_data = payload["view"]["state"]["values"]
+        joke_text = submitted_data["joke_input"]["joke"]["value"]
+        try:
+            slack_client.chat_postMessage(
+                channel="#test_bot",
+                text=f"Video ID: {joke_text}",
+            )
+        except SlackApiError as e:
+            print(f"Error posting message: {e.response['error']}")
+            return Response("Error"), 500
 
-# Quip test
+    return Response(), 200
 
-# title = "My Spreadsheet"
-# threads = quip_client.search_threads(title, count=1)
-# spreadsheet = threads.spreadsheets[0]
-# spreadsheet.load_content()
-
-# # Wstawianie danych do arkusza kalkulacyjnego
-# page = spreadsheet.get_named_page("Sheet1")
-# page.update_content([
-#     ["John Doe", "jdoe@gmail.com"],
-#     ["Jane Doe", "jane@gmail.com"]
-# ])
-
-# Start Flask server
 if __name__ == "__main__":
     app.run(port=3000, debug=True)
