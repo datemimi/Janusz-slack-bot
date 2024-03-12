@@ -18,15 +18,9 @@ greetings = [
     "hello",
     "morning",
     "hey",
-    "hej",
-    "czesc",
-    "cześć",
-    "witaj",
-    "dzien dobry",
-    "siema",
-    "dzień dobry",
-    "jol",
-    "joł",
+    "good morning",
+    "cheers",
+    "good afternoon",
 ]
 
 
@@ -127,14 +121,54 @@ def handle_joke():
             view={
                 "type": "modal",
                 "callback_id": "joke-modal",
-                "title": {"type": "plain_text", "text": "Wprowadź dane"},
+                "title": {"type": "plain_text", "text": "Your question"},
                 "blocks": [
                     {
                         "type": "input",
-                        "block_id": "joke_input",
-                        "element": {"type": "plain_text_input", "action_id": "joke"},
-                        "label": {"type": "plain_text", "text": "Your Joke:"},
-                    }
+                        "block_id": "task_name",
+                        "element": {
+                            "type": "plain_text_input",
+                            "action_id": "task_name_input",
+                        },
+                        "label": {"type": "plain_text", "text": "Task name:"},
+                    },
+                    {
+                        "type": "input",
+                        "block_id": "question",
+                        "element": {
+                            "type": "plain_text_input",
+                            "action_id": "question_input",
+                            "multiline": True,
+                        },
+                        "label": {"type": "plain_text", "text": "Question:"},
+                    },
+                    {
+                        "type": "input",
+                        "block_id": "video_url",
+                        "element": {
+                            "type": "plain_text_input",
+                            "action_id": "video_url_input",
+                        },
+                        "label": {"type": "plain_text", "text": "Video URL:"},
+                    },
+                    {
+                        "type": "input",
+                        "block_id": "screenshot_url",
+                        "element": {
+                            "type": "plain_text_input",
+                            "action_id": "screenshot_url_input",
+                        },
+                        "label": {"type": "plain_text", "text": "Screenshot URL:"},
+                    },
+                    {
+                        "type": "input",
+                        "block_id": "frames_range",
+                        "element": {
+                            "type": "plain_text_input",
+                            "action_id": "frames_range_input",
+                        },
+                        "label": {"type": "plain_text", "text": "Frames:"},
+                    },
                 ],
                 "submit": {"type": "plain_text", "text": "Submit"},
             },
@@ -151,26 +185,27 @@ def handle_joke():
 
 @app.route("/submission", methods=["POST"])
 def handle_submission():
-
     payload = json.loads(request.form.get("payload"))
 
     if payload["type"] == "view_submission":
-
         submitted_data = payload["view"]["state"]["values"]
 
-        joke_text = submitted_data["joke_input"]["joke"]["value"]
+        task_name = submitted_data["task_name"]["task_name_input"]["value"]
+        question = submitted_data["question"]["question_input"]["value"]
+        video_url = submitted_data["video_url"]["video_url_input"]["value"]
+        screenshot_url = submitted_data["screenshot_url"]["screenshot_url_input"][
+            "value"
+        ]
+        frames = submitted_data["frames_range"]["frames_range_input"]["value"]
 
         try:
-
             slack_client.chat_postMessage(
                 channel="#testing",
-                text=f"New Joke: {joke_text}",
+                text=f"Task name: {task_name}\nQuestion: {question}\nVideo: {video_url}\nScreenshot: {screenshot_url}\nFrames: {frames}",
             )
 
         except SlackApiError as e:
-
             print(f"Error posting message: {e.response['error']}")
-
             return Response("Error"), 500
 
     return Response(), 200
