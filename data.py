@@ -64,13 +64,10 @@ def analyze_questions(questions, all_excluded_words):
     return most_common_phrases
 
 def main():
-    # Pobranie standardowej listy angielskich słów nieistotnych z NLTK
     nltk_stopwords = set(stopwords.words('english'))
 
-    # Lista własnych słów do wykluczenia
     custom_exclude_words = {'fov', 'please', 'suggest', 'mark'}
 
-    # Połączenie słów nieistotnych z NLTK i własnych słów do wykluczenia w jedną listę
     all_excluded_words = nltk_stopwords.union(custom_exclude_words)
 
     questions = load_messages()
@@ -84,7 +81,6 @@ def main():
     phrases = [phrase for phrase, count in most_common_phrases]
     counts = [count for phrase, count in most_common_phrases]
 
-    #draw
     plt.figure(figsize=(10,8))
     plt.barh(phrases, counts, color='skyblue')
     plt.xlabel('Phrase count')
