@@ -1,38 +1,18 @@
 from flask import Flask, request, Response
 import os
-
 import json
-
 from datetime import datetime
-
 from slack_sdk import WebClient
 from slack_sdk.errors import SlackApiError
 from slackeventsapi import SlackEventAdapter
-
-from sqlalchemy import create_engine, Column, Integer, String, DateTime, func, insert, ForeignKey, Text, Sequence
+from sqlalchemy import create_engine, Column, Integer, String, DateTime, Text, ForeignKey
 from sqlalchemy.ext.declarative import declarative_base
-from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker
-from sqlalchemy.engine import URL
+from sqlalchemy.orm import sessionmaker, scoped_session
+from dotenv import load_dotenv
 
-
-import psycopg2
-
-from config import *
-
-
+load_dotenv()
 
 app = Flask(__name__)
-
-connection = psycopg2.connect(
-        user=USER,
-        dbname='testowa',
-        password=PASSWORD,
-        host=HOST,
-        port=5432
-        )
-
-if connection: print(f'Connection succesful for user {USER}!')
 
 SLACK_SIGNING_SECRET = os.environ.get("SLACK_SIGNING_SECRET")
 slack_token = os.environ.get("SLACK_BOT_TOKEN")
@@ -41,19 +21,33 @@ verification_token = os.environ.get("VERIFICATION")
 slack_client = WebClient(token=slack_token)
 slack_events_adapter = SlackEventAdapter(SLACK_SIGNING_SECRET, "/slack/events", app)
 
+DATABASE_URI = f'postgresql://{os.environ.get("DB_USER")}:{os.environ.get("DB_PASSWORD")}@{os.environ.get("DB_HOST")}/testowa'
+engine = create_engine(DATABASE_URI)
+Session = scoped_session(sessionmaker(bind=engine))
 
-def get_user_info(user_id):
-    try:
-        user_info = slack_client.users_profile_get(user=user_id)
-        return {
-            "real_name": user_info["profile"].get("real_name_normalized", ""),
-            "display_name": user_info["profile"].get("display_name_normalized", ""),
-            "user_id": user_id,
-        }
-    except SlackApiError as e:
-        print(f"Error getting user info: {e.response['error']}")
-        return None
+Base = declarative_base()
 
+class Category(Base):
+    __tablename__ = 'categories'
+    category_id = Column(Integer, primary_key=True)
+    category_name = Column(String)
+
+class User(Base):
+    __tablename__ = 'users'
+    user_id = Column(Integer, primary_key=True, autoincrement=True)
+    alias = Column(String, unique=True)
+    real_name = Column(String)
+
+class Message(Base):
+    __tablename__ = 'message'
+    message_id = Column(Integer, primary_key=True)
+    user_id = Column(Integer, ForeignKey('users.user_id'))
+    category_id = Column(Integer, ForeignKey('categories.category_id'))
+    question = Column(Text)
+    date = Column(DateTime)
+
+def init_db():
+    Base.metadata.create_all(engine)
 
 @app.route("/", methods=["GET", "POST"])
 def event_hook():
@@ -63,10 +57,8 @@ def event_hook():
             return json_dict["challenge"]
     return Response(status=200)
 
-
 @app.route("/question", methods=["POST"])
 def question_command():
-
     if request.form.get("token") != verification_token:
         return Response("Invalid token"), 403
 
@@ -132,6 +124,7 @@ def question_command():
                                     "action_id": "frames_range_input",
                                 },
                                 "label": {"type": "plain_text", "text": "*Frames:*"},
+
                             },
                             # Category dropdown menu
                             {
@@ -150,10 +143,9 @@ def question_command():
                                             "value": "1"
                                         },
                                         {
-                                            "text": {"type": "plain_text", "text": "Pickup scenario"},
-                                            "value": "2"
+                                            "text": {"type": "plain_text", "text": "Delivery"},
+                                           "value": "2"
                                         },
-                                        
                                     ]
                                 },
                                 "label": {"type": "plain_text", "text": "*Category:*"}
@@ -162,112 +154,84 @@ def question_command():
                         "submit": {"type": "plain_text", "text": "Submit"},
                     },
                 )
-
             except SlackApiError as e:
                 print(f"Error opening modal: {e.response['error']}")
                 return Response("Error"), 500
-
         else:
             return Response("User info not found"), 500
-
     else:
         return Response("Trigger ID or User ID not provided"), 400
 
     return Response(), 200
 
-
-
 @app.route("/submission", methods=["POST"])
 def handle_submission():
     payload = json.loads(request.form.get("payload"))
-
     if payload["type"] == "view_submission":
-        submitted_data = payload["view"]["state"]["values"]
-        user_id = payload["user"]["id"]
-        user_info = get_user_info(user_id)
+        session = Session()
+        try:
+            submitted_data = payload["view"]["state"]["values"]
+            user_id = payload["user"]["id"]
+            user_info = get_user_info(user_id)
 
-        if user_info:
-            task_name = submitted_data["task_name"]["task_name_input"]["value"]
-            question = submitted_data["question"]["question_input"]["value"]
-            video_url = submitted_data["video_url"]["video_url_input"]["value"]
-            screenshot_url = submitted_data["screenshot_url"]["screenshot_url_input"][
-                "value"
-            ]
-            frames = submitted_data["frames_range"]["frames_range_input"]["value"]
-            category_name = submitted_data["category"]["category_selection"]["selected_option"]["text"]["text"]
-            category_type = submitted_data["category"]["category_selection"]["selected_option"]["value"]
-            
+            if user_info:
+                task_name = submitted_data["task_name"]["task_name_input"]["value"]
+                question = submitted_data["question"]["question_input"]["value"]
+                video_url = submitted_data["video_url"]["video_url_input"]["value"]
+                screenshot_url = submitted_data["screenshot_url"]["screenshot_url_input"]["value"]
+                frames = submitted_data["frames_range"]["frames_range_input"]["value"]
+                category_name = submitted_data["category"]["category_selection"]["selected_option"]["text"]["text"]
+                category_type = submitted_data["category"]["category_selection"]["selected_option"]["value"]
 
-            user_display = f"{user_info['real_name']} (<@{user_info['user_id']}>)"
-            message_text = (
-                f"*From:* {user_display}\n"
-                f"*Task name:* {task_name}\n"
-                f"*Question:* {question}\n"
-                f"*Video URL:*\n{video_url}\n"
-                f"*Screenshot URL:*\n{screenshot_url}\n"
-                f"*Frames:* {frames}\n"
-                f"*Category:* {category_name}\n"
-            )
-            try:
+                user_display = f"{user_info['real_name']} (<@{user_info['user_id']}>)"
+
+                message_text = (
+                    f"*From:* {user_display}\n"
+                    f"*Task name:* {task_name}\n"
+                    f"*Question:* {question}\n"
+                    f"*Video URL:*\n{video_url}\n"
+                    f"*Screenshot URL:*\n{screenshot_url}\n"
+                    f"*Frames:* {frames}\n"
+                    f"*Category:* {category_name}\n"
+                )
+
                 slack_client.chat_postMessage(channel="#test_bot", text=message_text)
-                if connection:
-                    Base = declarative_base()
 
-                    class Category(Base):
-                        __tablename__ = 'categories'
-                        category_id = Column(Integer, primary_key=True)
-                        category_name = Column(String)
-
-                    class User(Base):
-                        __tablename__='users'
-                        user_id=Column(Integer, primary_key=True, autoincrement=True)
-                        alias=Column(String, unique=True)
-                        real_name=Column(String)
-
-
-                    class Message(Base):
-                        __tablename__ = 'message'
-                        message_id=Column(Integer, Sequence('message_id_seq'), primary_key=True)
-                        user_id=Column(Integer, ForeignKey('users.user_id'))
-                        category_id = Column(Integer, ForeignKey('categories.category_id'))
-                        question = Column(Text)
-                        date = Column(DateTime)
-                        
-                    
-                        
-                    
-                    engine = create_engine(f'postgresql://{USER}:{PASSWORD}@{HOST}:5432/testowa')
-                    Session = sessionmaker(bind=engine)
-                    session = Session()
-                    
-                    user = session.query(User).filter_by(alias=user_info['display_name']).first()
-                    
-                    
-                    if user is None:
-                    	user = User(alias=user_info['display_name'], real_name=user_info.get('real_name', ''))
-                    	session.add(user)
-                    	session.commit()
-                    
-                    new_message = Message(
-                            date = datetime.now(),
-                            user_id=user.user_id,
-                            category_id=category_type,
-                            question=question
-                            )
-                    session.add(new_message)
+                user = session.query(User).filter_by(alias=user_info['display_name']).first()
+                if user is None:
+                    user = User(alias=user_info['display_name'], real_name=user_info['real_name'])
+                    session.add(user)
                     session.commit()
-                    session.close()
-                    if session.commit():
-                        print('QUERY executed!')
-            
-            except SlackApiError as e:
-                print(f"Error posting message: {e.response['error']}")
-                return Response("Error"), 500
-        else:
-            return Response("User info not found"), 500
 
+                new_message = Message(
+                    date = datetime.now(),
+                    user_id=user.user_id,
+                    category_id=category_type,
+                    question=question
+                )
+                session.add(new_message)
+                session.commit()
+        except SlackApiError as e:
+            print(f"Error posting message: {e.response['error']}")
+            session.rollback()
+            return Response("Error"), 500
+        finally:
+            session.close()
     return Response(), 200
 
+def get_user_info(user_id):
+    try:
+        user_info = slack_client.users_profile_get(user=user_id)
+        return {
+            "real_name": user_info["profile"].get("real_name_normalized", ""),
+            "display_name": user_info["profile"].get("display_name_normalized", ""),
+            "user_id": user_id,
+        }
+    except SlackApiError as e:
+        print(f"Error getting user info: {e.response['error']}")
+        return None
 
 if __name__ == "__main__":
+    init_db()
     app.run(port=3000, debug=True)
+
