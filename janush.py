@@ -3,15 +3,36 @@ import os
 
 import json
 
+from datetime import datetime
+
 from slack_sdk import WebClient
 from slack_sdk.errors import SlackApiError
 from slackeventsapi import SlackEventAdapter
 
-from sqlalchemy import create_engine, Column, Integer, String, DateTime, func
+from sqlalchemy import create_engine, Column, Integer, String, DateTime, func, insert, ForeignKey, Text, Sequence
 from sqlalchemy.ext.declarative import declarative_base
+from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
+from sqlalchemy.engine import URL
+
+
+import psycopg2
+
+from config import *
+
+
 
 app = Flask(__name__)
+
+connection = psycopg2.connect(
+        user=USER,
+        dbname='testowa',
+        password=PASSWORD,
+        host=HOST,
+        port=5432
+        )
+
+if connection: print(f'Connection succesful for user {USER}!')
 
 SLACK_SIGNING_SECRET = os.environ.get("SLACK_SIGNING_SECRET")
 slack_token = os.environ.get("SLACK_BOT_TOKEN")
@@ -45,6 +66,7 @@ def event_hook():
 
 @app.route("/question", methods=["POST"])
 def question_command():
+
     if request.form.get("token") != verification_token:
         return Response("Invalid token"), 403
 
@@ -53,6 +75,7 @@ def question_command():
 
     if trigger_id and user_id:
         user_info = get_user_info(user_id)
+
         if user_info:
             try:
                 slack_client.views_open(
@@ -99,10 +122,7 @@ def question_command():
                                     "action_id": "screenshot_url_input",
                                     "multiline": True,
                                 },
-                                "label": {
-                                    "type": "plain_text",
-                                    "text": "*Screenshot URL:*",
-                                },
+                                "label": {"type": "plain_text", "text": "*Screenshot URL:*"},
                             },
                             {
                                 "type": "input",
@@ -113,19 +133,48 @@ def question_command():
                                 },
                                 "label": {"type": "plain_text", "text": "*Frames:*"},
                             },
+                            # Category dropdown menu
+                            {
+                                "type": "input",
+                                "block_id": "category",
+                                "element": {
+                                    "type": "static_select",
+                                    "placeholder": {
+                                        "type": "plain_text",
+                                        "text": "Select a category"
+                                    },
+                                    "action_id": "category_selection",
+                                    "options": [
+                                        {
+                                            "text": {"type": "plain_text", "text": "Device location"},
+                                            "value": "1"
+                                        },
+                                        {
+                                            "text": {"type": "plain_text", "text": "Pickup scenario"},
+                                            "value": "2"
+                                        },
+                                        
+                                    ]
+                                },
+                                "label": {"type": "plain_text", "text": "*Category:*"}
+                            },
                         ],
                         "submit": {"type": "plain_text", "text": "Submit"},
                     },
                 )
+
             except SlackApiError as e:
                 print(f"Error opening modal: {e.response['error']}")
                 return Response("Error"), 500
+
         else:
             return Response("User info not found"), 500
+
     else:
         return Response("Trigger ID or User ID not provided"), 400
 
     return Response(), 200
+
 
 
 @app.route("/submission", methods=["POST"])
@@ -145,19 +194,72 @@ def handle_submission():
                 "value"
             ]
             frames = submitted_data["frames_range"]["frames_range_input"]["value"]
+            category_name = submitted_data["category"]["category_selection"]["selected_option"]["text"]["text"]
+            category_type = submitted_data["category"]["category_selection"]["selected_option"]["value"]
+            
 
-            user_display = f"{user_info['display_name']} (<@{user_info['user_id']}>)"
+            user_display = f"{user_info['real_name']} (<@{user_info['user_id']}>)"
             message_text = (
                 f"*From:* {user_display}\n"
                 f"*Task name:* {task_name}\n"
                 f"*Question:* {question}\n"
                 f"*Video URL:*\n{video_url}\n"
                 f"*Screenshot URL:*\n{screenshot_url}\n"
-                f"*Frames:* {frames}"
+                f"*Frames:* {frames}\n"
+                f"*Category:* {category_name}\n"
             )
             try:
-                slack_client.chat_postMessage(channel="#testing", text=message_text)
-                print("Message sent successfully!")
+                slack_client.chat_postMessage(channel="#test_bot", text=message_text)
+                if connection:
+                    Base = declarative_base()
+
+                    class Category(Base):
+                        __tablename__ = 'categories'
+                        category_id = Column(Integer, primary_key=True)
+                        category_name = Column(String)
+
+                    class User(Base):
+                        __tablename__='users'
+                        user_id=Column(Integer, primary_key=True, autoincrement=True)
+                        alias=Column(String, unique=True)
+                        real_name=Column(String)
+
+
+                    class Message(Base):
+                        __tablename__ = 'message'
+                        message_id=Column(Integer, Sequence('message_id_seq'), primary_key=True)
+                        user_id=Column(Integer, ForeignKey('users.user_id'))
+                        category_id = Column(Integer, ForeignKey('categories.category_id'))
+                        question = Column(Text)
+                        date = Column(DateTime)
+                        
+                    
+                        
+                    
+                    engine = create_engine(f'postgresql://{USER}:{PASSWORD}@{HOST}:5432/testowa')
+                    Session = sessionmaker(bind=engine)
+                    session = Session()
+                    
+                    user = session.query(User).filter_by(alias=user_info['display_name']).first()
+                    
+                    
+                    if user is None:
+                    	user = User(alias=user_info['display_name'], real_name=user_info.get('real_name', ''))
+                    	session.add(user)
+                    	session.commit()
+                    
+                    new_message = Message(
+                            date = datetime.now(),
+                            user_id=user.user_id,
+                            category_id=category_type,
+                            question=question
+                            )
+                    session.add(new_message)
+                    session.commit()
+                    session.close()
+                    if session.commit():
+                        print('QUERY executed!')
+            
             except SlackApiError as e:
                 print(f"Error posting message: {e.response['error']}")
                 return Response("Error"), 500
